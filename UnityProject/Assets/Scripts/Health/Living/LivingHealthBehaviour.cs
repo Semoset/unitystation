@@ -39,6 +39,7 @@ public abstract class LivingHealthBehaviour : NetworkBehaviour
 
 	protected GameObject LastDamagedBy;
 
+
 	public ConsciousState ConsciousState
 	{
 		get => consciousState;
@@ -347,6 +348,7 @@ public abstract class LivingHealthBehaviour : NetworkBehaviour
 			}
 		}
 	}
+
 
 	/// ---------------------------
 	/// VISUAL EFFECTS

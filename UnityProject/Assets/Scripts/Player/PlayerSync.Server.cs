@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.Networking;
@@ -38,6 +39,8 @@ public partial class PlayerSync
 
 	/// Last direction that player moved in. Currently works more like a true impulse, therefore is zero-able
 	private Vector2 serverLastDirection;
+
+	private RegisterPlayer registerPlayer;
 
 	public float SpeedServer
 	{
@@ -85,6 +88,7 @@ public partial class PlayerSync
 		{
 			base.OnStartServer();
 			InitServerState();
+			registerPlayer = GetComponent<RegisterPlayer>();
 		}
 
 	///
@@ -147,7 +151,7 @@ public partial class PlayerSync
 		Vector3Int origin = Vector3Int.RoundToInt( (Vector2)serverState.WorldPosition );
 		Vector3Int pushGoal = origin + Vector3Int.RoundToInt( (Vector2)direction );
 
-		if ( !MatrixManager.IsPassableAt( origin, pushGoal, !followMode ) ) {
+		if ( !MatrixManager.IsPassableAt( origin, pushGoal, includingPlayers: !followMode ) ) {
 			return false;
 		}
 
@@ -334,8 +338,8 @@ public partial class PlayerSync
 			CheckMovementServer();
 			OnStartMove().Invoke( oldPos.RoundToInt(), newPos.RoundToInt() );
 		}
-//		Logger.Log($"Server Updated target {serverTargetState}. {serverPendingActions.Count} pending");
-		}
+		//Logger.Log($"Server Updated target {serverTargetState}. {serverPendingActions.Count} pending");
+	}
 
 	/// NextState that also subscribes player to matrix rotations
 	[Server]
@@ -602,13 +606,53 @@ public partial class PlayerSync
 			                   $"Target    :{serverState}", Category.Movement );
 			serverLerpState.WorldPosition = targetPos;
 		}
-		if ( serverLerpState.WorldPosition == targetPos ) {
+		if ( serverLerpState.WorldPosition == targetPos) {
 			OnTileReached().Invoke( targetPos.RoundToInt() );
 			// Check for swap once movement is done, to prevent us and another player moving into the same tile
-			CheckAndDoSwap(targetPos.RoundToInt(), serverLastDirection*-1);
+			if (!playerScript.IsGhost)
+			{
+				CheckAndDoSwap(targetPos.RoundToInt(), serverLastDirection * -1);
+			}
 		}
 		if ( TryNotifyPlayers() ) {
 			TryUpdateServerTarget();
+		}
+	}
+
+	private void OnEnable()
+	{
+		onTileReached.AddListener(Cross);
+	}
+	private void OnDisable()
+	{
+		onTileReached.RemoveListener(Cross);
+	}
+
+	private void Cross(Vector3Int position)
+	{
+		CheckTileSlip();
+
+		if (PlayerUtils.IsGhost(gameObject))
+		{
+			return;
+		}
+		List<RegisterItem> objects = MatrixManager.GetAt<RegisterItem>(position);
+		// Removes player from object list
+		objects.Remove(gameObject.GetComponent<RegisterItem>());
+		for (int i = 0; i < objects.Count; i++)
+		{
+			objects[i].Cross(registerPlayer);
+		}
+	}
+
+	public void CheckTileSlip()
+	{
+		var position = serverState.Position.CutToInt();
+		var matrix = MatrixManager.Get(serverState.MatrixId);
+
+		if (matrix.MetaDataLayer.IsSlipperyAt(position))
+		{
+			registerPlayer.Slip();
 		}
 	}
 }

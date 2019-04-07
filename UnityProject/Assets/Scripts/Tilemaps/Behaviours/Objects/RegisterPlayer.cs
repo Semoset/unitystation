@@ -1,9 +1,11 @@
-﻿using UnityEngine;
+﻿using System.Collections;
+using UnityEngine;
 
 
 [ExecuteInEditMode]
 public class RegisterPlayer : RegisterTile
 {
+	private bool isStunned;
 
 	/// <summary>
 	/// Whether the player should currently be depicted laying on the ground
@@ -12,6 +14,7 @@ public class RegisterPlayer : RegisterTile
 
 	private UserControlledSprites playerSprites;
 	private PlayerScript playerScript;
+	private MetaDataLayer metaDataLayer;
 
 	public bool IsBlocking => !playerScript.IsGhost && !isDown;
 
@@ -19,12 +22,14 @@ public class RegisterPlayer : RegisterTile
 	/// True when the player is laying down
 	/// </summary>
 	public bool IsDown => isDown;
+
 	private void Awake()
 	{
 		playerSprites = GetComponent<UserControlledSprites>();
 		playerScript = GetComponent<PlayerScript>();
 		//initially we are upright and don't rotate with the matrix
 		rotateWithMatrix = false;
+		metaDataLayer = transform.GetComponentInParent<MetaDataLayer>();
 	}
 
 	public override bool IsPassable()
@@ -94,9 +99,7 @@ public class RegisterPlayer : RegisterTile
 				spriteRenderer.transform.Rotate(0, 0, -90);
 				spriteRenderer.sortingLayerName = "Blood";
 			}
-
 		}
-
 	}
 
 	/// <summary>
@@ -117,5 +120,70 @@ public class RegisterPlayer : RegisterTile
 				spriteRenderer.sortingLayerName = "Players";
 			}
 		}
+	}
+	/// <summary>
+	/// Slips and stuns the player.
+	/// </summary>
+	/// <param name="slipWhileWalking">Enables slipping while walking.</param>
+	public void Slip(bool slipWhileWalking = false)
+	{
+		// Don't slip while walking unless its enabled with "slipWhileWalking".
+		// Don't slip while player's consious state is crit, soft crit, or dead.
+		if (!slipWhileWalking
+		    && playerScript.PlayerSync.SpeedServer <= playerScript.playerMove.WalkSpeed
+		    || playerScript.playerHealth.IsCrit
+		    || playerScript.playerHealth.IsSoftCrit
+		    || playerScript.playerHealth.IsDead)
+		{
+			return;
+		}
+		Stun();
+		SoundManager.PlayNetworkedAtPos("Slip", WorldPosition);
+		// Let go of pulled items.
+		playerScript.pushPull.CmdStopPulling();
+	}
+
+	/// <summary>
+	/// Stops the player from moving and interacting for a period of time.
+	/// Also drops held items by default.
+	/// </summary>
+	/// <param name="stunDuration">Time before the stun is removed.</param>
+	/// <param name="dropItem">If items in the hand slots should be dropped on stun.</param>
+	public void Stun(float stunDuration = 4f, bool dropItem = true)
+	{
+		isStunned = true;
+		PlayerUprightMessage.SendToAll(gameObject, false);
+		if (dropItem)
+		{
+			playerScript.playerNetworkActions.DropItem("leftHand");
+			playerScript.playerNetworkActions.DropItem("rightHand");
+		}
+		playerScript.playerMove.allowInput = false;
+
+		StartCoroutine(StunTimer(stunDuration));
+
+		IEnumerator StunTimer(float stunTime)
+		{
+			yield return new WaitForSeconds(stunTime);
+			RemoveStun();
+		}
+	}
+
+	public void RemoveStun()
+	{
+		isStunned = false;
+		UpdateCanMove();
+	}
+
+	private void UpdateCanMove()
+	{
+		if (playerScript.playerHealth.IsCrit || playerScript.playerHealth.IsSoftCrit ||
+		    playerScript.playerHealth.IsDead || isStunned)
+		{
+			return;
+		}
+
+		PlayerUprightMessage.SendToAll(gameObject, true);
+		playerScript.playerMove.allowInput = true;
 	}
 }
